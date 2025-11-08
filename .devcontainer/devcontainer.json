@@ -1,0 +1,11 @@
+{
+    "name": "Rust installed using x86-only libraries",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"runArgs": [
+        "-v",
+        "${localWorkspaceFolder}:/workspace:cached"
+    ],
+    "remoteUser": "root"
+}
