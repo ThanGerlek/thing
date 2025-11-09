@@ -31,6 +31,7 @@ pub struct EncryptedMessage {
     pub ciphertext: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl EncryptedMessage {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)

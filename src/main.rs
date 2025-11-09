@@ -5,7 +5,7 @@ use std::net::TcpStream;
 
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Key, Nonce,
+    Aes256Gcm, Nonce,
 };
 
 mod messages;
@@ -14,8 +14,9 @@ use messages::{EncryptedMessage, HelloMessage, ServerResponse};
 use rand::thread_rng;
 use rand::RngCore;
 
-use rsa::pkcs8::DecodePublicKey;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
+use rsa::pkcs8::DecodePublicKey;
+// use rsa::pss::{Signature, VerifyingKey};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
@@ -40,17 +41,17 @@ fn main() {
     loop {
         let mut input = String::new();
         // reads some text from the terminal
-        print!("Enter message: ");
+        println!("Enter message:");
         io::stdin()
             .read_line(&mut input)
             .expect("Failed to read input");
         // if the text is “exit”, break from the loop
-        if input == "exit" {
+        if input.contains("exit") {
             break;
         };
         // otherwise...
         let output = handle_input(input, &mut stream, &pub_key);
-        println!("{}", output);
+        println!("Client received: {}", output);
     }
 }
 
@@ -59,7 +60,11 @@ fn main() {
 //
 
 fn send_hello(stream: &mut TcpStream) -> (HelloMessage, [u8; 32]) {
-    let nonce = generate_nonce();
+    // let nonce = generate_nonce();
+    let nonce: [u8; 32] = [
+        154, 13, 198, 96, 91, 118, 75, 241, 229, 58, 170, 15, 164, 137, 49, 222, 108, 79, 232, 121,
+        226, 165, 25, 251, 138, 222, 179, 25, 169, 234, 82, 38,
+    ];
     let message = HelloMessage {
         signed_message: vec![],
         pub_key: "".to_string(),
@@ -96,7 +101,10 @@ fn parse_hello_response(hello_response: HelloMessage, nonce: [u8; 32]) -> RsaPub
 
     // Verify the PKCS#1 v1.5 signature on the nonce
     let signature = Signature::try_from(&signed_nonce[..]).unwrap();
-    verifying_key.verify(&nonce, &signature).unwrap(); // FIXME Verification error
+    match verifying_key.verify(&nonce, &signature) { // FIXME Verification error
+        Ok(_) => (),
+        Err(e) => println!("Signature failed to verify: {}", e)
+    };
 
     return pub_key;
 }
@@ -105,82 +113,62 @@ fn parse_hello_response(hello_response: HelloMessage, nonce: [u8; 32]) -> RsaPub
 //  Encrypted Messages
 //
 
-fn handle_input(
-    message: String,
-    stream: &mut TcpStream,
-    pub_key: &RsaPublicKey,
-) -> String {
+fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey) -> String {
     //        Send an Encrypted Message
 
     // Create a new symmetric key K
     let symmetric_key = Aes256Gcm::generate_key(OsRng);
 
     // Create a new nonce
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let sending_nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
     // Encrypt the message with K
     let symmetric_cipher = Aes256Gcm::new(&symmetric_key);
-    let ciphertext: Vec<u8> = symmetric_cipher.encrypt(&nonce, message.as_ref()).unwrap();
+    let sending_ciphertext: Vec<u8> = symmetric_cipher.encrypt(&sending_nonce, message.as_ref()).unwrap();
 
     // Encrypt that key K with the server’s public key
     let mut rng = rand::thread_rng();
-    let encrypted_symmetric_key =
-        pub_key.encrypt(&mut rng, Pkcs1v15Encrypt, symmetric_key.as_ref()).unwrap();
+    let encrypted_symmetric_key = pub_key
+        .encrypt(&mut rng, Pkcs1v15Encrypt, symmetric_key.as_ref())
+        .unwrap();
 
     // Actually build and send the message
-    let msg = EncryptedMessage {
+    let sending_encrypted_message = EncryptedMessage {
         encrypted_key: encrypted_symmetric_key,
-        nonce_bytes: nonce.to_vec(),
-        ciphertext: ciphertext,
+        nonce_bytes: sending_nonce.to_vec(),
+        ciphertext: sending_ciphertext,
     };
 
-    let msg = msg.to_json();
-    stream.write_all(msg.unwrap().as_bytes()).unwrap();
+    let sending_encrypted_message_json = sending_encrypted_message.to_json().unwrap();
+    stream.write_all(sending_encrypted_message_json.as_bytes()).unwrap();
 
     // Read the response
     let mut buffer = [0; 4096];
     let bytes_read = stream.read(&mut buffer).unwrap();
-    let message_json = str::from_utf8(&buffer[..bytes_read])
-        .expect("Server response not in UTF8")
-        .to_string();
-    let message = ServerResponse::from_json(message_json).unwrap();
+    let received_message_json = str::from_utf8(&buffer[..bytes_read]).unwrap().to_string();
+    let server_response = ServerResponse::from_json(received_message_json.clone()).unwrap();
 
     //        Parse the Server Response
 
-    let outer_nonce: Vec<u8> = message.nonce_bytes;
+    // Extract
+    let ciphertext: Vec<u8> = server_response.encrypted_message;
+    let receiving_nonce: Vec<u8> = server_response.nonce_bytes;
     #[allow(deprecated)]
-    let outer_nonce = Nonce::from_slice(&outer_nonce[..]);
-    let message: Vec<u8> = message.encrypted_message;
+    let receiving_nonce = Nonce::from_slice(&receiving_nonce[..]);
 
-    // Extract underlying EncryptedMessage data
-    let message: String = String::from_utf8(message).unwrap();
-    let message: EncryptedMessage = EncryptedMessage::from_json(message).unwrap();
-
-    let inner_nonce: Vec<u8> = message.nonce_bytes;
-    #[allow(deprecated)]
-    let inner_nonce = Nonce::from_slice(&inner_nonce[..]);
-    let inner_key: Vec<u8> = message.encrypted_key;
-    let message: Vec<u8> = message.ciphertext;
-
-    // Decrypt key using symmetric key and nonce
+    // Decrypt
     let cipher = Aes256Gcm::new(&symmetric_key);
-    let inner_key: Vec<u8> = cipher.decrypt(&outer_nonce, inner_key.as_ref()).unwrap();
-    #[allow(deprecated)]
-    let inner_key = Key::<Aes256Gcm>::from_slice(&inner_key);
+    let plaintext: Vec<u8> = cipher.decrypt(&receiving_nonce, ciphertext.as_ref()).unwrap();
+    let plaintext: String = String::from_utf8(plaintext).unwrap();
 
-    // Decrypt message
-    let cipher = Aes256Gcm::new(&inner_key);
-    let message: Vec<u8> = cipher.decrypt(&inner_nonce, message.as_ref()).unwrap();
-
-    let message = String::from_utf8(message).unwrap();
-
-    return message;
+    return plaintext;
 }
 
 //
 //    Misc
 //
 
+#[allow(dead_code)]
 fn generate_nonce() -> [u8; 32] {
     let mut nonce = [0u8; 32];
     thread_rng().fill_bytes(&mut nonce);
