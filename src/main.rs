@@ -60,22 +60,23 @@ fn main() {
 
 fn send_hello(stream: &mut TcpStream) -> (HelloMessage, [u8; 32]) {
     let nonce = generate_nonce();
-    let msg = HelloMessage {
+    let message = HelloMessage {
         signed_message: vec![],
         pub_key: "".to_string(),
         nonce,
     };
 
-    let msg = msg.to_json();
-    stream.write_all(msg.unwrap().as_bytes()).unwrap();
+    let message = message.to_json().unwrap();
+    stream.write_all(message.as_bytes()).unwrap();
 
     let mut buffer = [0; 4096];
     let bytes_read = stream.read(&mut buffer).unwrap();
     let response_json = str::from_utf8(&buffer[..bytes_read])
         .expect("Server response not in UTF8")
         .to_string();
-
-    return (HelloMessage::from_json(response_json).unwrap(), nonce);
+    let response = HelloMessage::from_json(response_json.clone()).unwrap();
+    
+    return (response, nonce);
 }
 
 fn parse_hello_response(hello_response: HelloMessage, nonce: [u8; 32]) -> RsaPublicKey {
