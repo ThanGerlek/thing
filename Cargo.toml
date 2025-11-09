@@ -10,3 +10,4 @@ rand = "0.8.5"
 rsa = {version = "0.9.6", features = ["sha2"]}
 serde = { version="1.0.210", features = ["derive"]}
 serde_json = "1.0.128"
+typenum = "1.19.0"
