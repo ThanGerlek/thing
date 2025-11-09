@@ -31,10 +31,10 @@ fn main() {
     println!("Connected to server");
 
     // sends a Hello Message
-    let hello_response = send_hello(&mut stream);
+    let (hello_response, nonce) = send_hello(&mut stream);
 
     // parses the server response
-    let pub_key: RsaPublicKey = parse_hello_response(hello_response);
+    let pub_key: RsaPublicKey = parse_hello_response(hello_response, nonce);
 
     // loops:
     loop {
@@ -58,11 +58,12 @@ fn main() {
 // Hello Messages
 //
 
-fn send_hello(stream: &mut TcpStream) -> HelloMessage {
+fn send_hello(stream: &mut TcpStream) -> (HelloMessage, [u8; 32]) {
+    let nonce = generate_nonce();
     let msg = HelloMessage {
         signed_message: vec![],
         pub_key: "".to_string(),
-        nonce: generate_nonce(),
+        nonce,
     };
 
     let msg = msg.to_json();
@@ -74,13 +75,17 @@ fn send_hello(stream: &mut TcpStream) -> HelloMessage {
         .expect("Server response not in UTF8")
         .to_string();
 
-    return HelloMessage::from_json(response_json).unwrap();
+    return (HelloMessage::from_json(response_json).unwrap(), nonce);
 }
 
-fn parse_hello_response(hello_response: HelloMessage) -> RsaPublicKey {
+fn parse_hello_response(hello_response: HelloMessage, nonce: [u8; 32]) -> RsaPublicKey {
     let server_public_key_pem: String = hello_response.pub_key;
     let signed_nonce: Vec<u8> = hello_response.signed_message;
-    let nonce: [u8; 32] = hello_response.nonce;
+    let server_nonce: [u8; 32] = hello_response.nonce;
+
+    if server_nonce != nonce {
+        panic!("Nonces don't match!");
+    }
 
     // Convert from PEM format
     let pub_key: RsaPublicKey = RsaPublicKey::from_public_key_pem(&server_public_key_pem).unwrap();
