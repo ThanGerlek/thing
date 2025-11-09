@@ -90,8 +90,8 @@ fn parse_hello_response(hello_response: HelloMessage) -> Result<RsaPublicKey, My
     let verifying_key: VerifyingKey<Sha256> = VerifyingKey::from(pub_key.clone());
     
     // Verify the PKCS#1 v1.5 signature on the nonce
-    let signature = Signature::try_from(&nonce[..])?;
-    verifying_key.verify(&signed_nonce, &signature)?;  // FIXME Verification error
+    let signature = Signature::try_from(&signed_nonce[..])?;
+    verifying_key.verify(&nonce, &signature)?;  // FIXME Verification error
 
     return Ok(pub_key);
 }
@@ -139,6 +139,7 @@ fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey)
     //        Parse the Server Response
 
     let outer_nonce: Vec<u8> = message.nonce_bytes;
+    #[allow(deprecated)]
     let outer_nonce = Nonce::from_slice(&outer_nonce[..]);
     let message: Vec<u8> = message.encrypted_message;
 
@@ -147,6 +148,7 @@ fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey)
     let message: EncryptedMessage = EncryptedMessage::from_json(message)?;
 
     let inner_nonce: Vec<u8> = message.nonce_bytes;
+    #[allow(deprecated)]
     let inner_nonce = Nonce::from_slice(&inner_nonce[..]);
     let inner_key: Vec<u8> = message.encrypted_key;
     let message: Vec<u8> = message.ciphertext;
@@ -154,6 +156,7 @@ fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey)
     // Decrypt key using symmetric key and nonce
     let cipher = Aes256Gcm::new(&symmetric_key);
     let inner_key: Vec<u8> = cipher.decrypt(&outer_nonce, inner_key.as_ref())?;
+    #[allow(deprecated)]
     let inner_key = Key::<Aes256Gcm>::from_slice(&inner_key);
     
     // Decrypt message
