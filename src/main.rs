@@ -5,7 +5,7 @@ use std::io::Write;
 use std::string::FromUtf8Error;
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng, generic_array::GenericArray},
+    aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm,
     Key,
     Nonce,
@@ -22,11 +22,6 @@ use rsa::pkcs8::DecodePublicKey;
 use rsa::pss::{Signature, VerifyingKey};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
-
-use typenum::U32;
-
-
-type SymmetricKeyType = GenericArray<u8, U32>;
 
 
 fn main() {
@@ -90,13 +85,13 @@ fn parse_hello_response(hello_response: HelloMessage) -> Result<RsaPublicKey, My
 
     // Convert from PEM format
     let pub_key: RsaPublicKey = RsaPublicKey::from_public_key_pem(&server_public_key_pem)?;
-
+    
     // Derive the verifying key from the public key   
     let verifying_key: VerifyingKey<Sha256> = VerifyingKey::from(pub_key.clone());
-
+    
     // Verify the PKCS#1 v1.5 signature on the nonce
     let signature = Signature::try_from(&nonce[..])?;
-    verifying_key.verify(&signed_nonce, &signature)?;
+    verifying_key.verify(&signed_nonce, &signature)?;  // FIXME Verification error
 
     return Ok(pub_key);
 }
@@ -106,30 +101,25 @@ fn parse_hello_response(hello_response: HelloMessage) -> Result<RsaPublicKey, My
 //  Encrypted Messages
 //
 
-fn handle_input(input: String, stream: &mut TcpStream, pub_key: &RsaPublicKey) -> Result<String, MyError> {
-    // ...send an Encrypted Message
-    let (response, symmetric_key) = send_encrypted_message(input, stream, pub_key)?;
-    
-    // parse the Server Response
-    let response = parse_encrypted_response(response, symmetric_key)?;
-    return Ok(response);
-}
+fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey) -> Result<String, MyError> {
 
-fn send_encrypted_message(msg: String, stream: &mut TcpStream, pub_key: &RsaPublicKey) -> Result<(ServerResponse, SymmetricKeyType), MyError> {
+    //        Send an Encrypted Message
+
     // Create a new symmetric key K
-    let symmetric_key: SymmetricKeyType = Aes256Gcm::generate_key(OsRng);
+    let symmetric_key = Aes256Gcm::generate_key(OsRng);
     
     // Create a new nonce
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     
     // Encrypt the message with K
     let symmetric_cipher = Aes256Gcm::new(&symmetric_key);
-    let ciphertext: Vec<u8> = symmetric_cipher.encrypt(&nonce, msg.as_ref())?;
+    let ciphertext: Vec<u8> = symmetric_cipher.encrypt(&nonce, message.as_ref())?;
 
     // Encrypt that key K with the server’s public key
     let mut rng = rand::thread_rng();
     let encrypted_symmetric_key = pub_key.encrypt(&mut rng, Pkcs1v15Encrypt, symmetric_key.as_ref())?;
 
+    // Actually build and send the message
     let msg = EncryptedMessage {
         encrypted_key: encrypted_symmetric_key,
         nonce_bytes: nonce.to_vec(),
@@ -139,15 +129,15 @@ fn send_encrypted_message(msg: String, stream: &mut TcpStream, pub_key: &RsaPubl
     let msg = msg.to_json();
     stream.write_all(msg?.as_bytes())?;
 
+    // Read the response
     let mut buffer = [0; 4096];
     let bytes_read = stream.read(&mut buffer)?;
-    let response_json = str::from_utf8(&buffer[..bytes_read]).expect("Server response not in UTF8").to_string();
-    let response = ServerResponse::from_json(response_json)?;
+    let message_json = str::from_utf8(&buffer[..bytes_read]).expect("Server response not in UTF8").to_string();
+    let message = ServerResponse::from_json(message_json)?;
 
-    return Ok((response, symmetric_key));
-}
 
-fn parse_encrypted_response(message: ServerResponse, symmetric_key: SymmetricKeyType) -> Result<String, MyError> {
+    //        Parse the Server Response
+
     let outer_nonce: Vec<u8> = message.nonce_bytes;
     let outer_nonce = Nonce::from_slice(&outer_nonce[..]);
     let message: Vec<u8> = message.encrypted_message;
@@ -187,55 +177,56 @@ fn generate_nonce() -> [u8; 32] {
 }
 
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum MyError {
-    Io,
-    Json,
-    AesGcm,
-    RsaPkcs8Spki,
-    RsaSignature,
-    Rsa,
-    FromUtf8
+    Io(io::Error),
+    Json(serde_json::Error),
+    AesGcm(aes_gcm::Error),
+    RsaPkcs8Spki(rsa::pkcs8::spki::Error),
+    RsaSignature(rsa::signature::Error),
+    Rsa(rsa::Error),
+    FromUtf8(FromUtf8Error),
 }
 
 impl From<io::Error> for MyError {
-    fn from(_err: io::Error) -> Self {
-        MyError::Io
+    fn from(e: io::Error) -> Self {
+        MyError::Io(e)
     }
 }
 
 impl From<serde_json::Error> for MyError {
-    fn from(_err: serde_json::Error) -> Self {
-        MyError::Json
+    fn from(e: serde_json::Error) -> Self {
+        MyError::Json(e)
     }
 }
 
 impl From<aes_gcm::Error> for MyError {
-    fn from(_err: aes_gcm::Error) -> Self {
-        MyError::AesGcm
+    fn from(e: aes_gcm::Error) -> Self {
+        MyError::AesGcm(e)
     }
 }
 
 impl From<rsa::pkcs8::spki::Error> for MyError {
-    fn from(_err: rsa::pkcs8::spki::Error) -> Self {
-        MyError::RsaPkcs8Spki
+    fn from(e: rsa::pkcs8::spki::Error) -> Self {
+        MyError::RsaPkcs8Spki(e)
     }
 }
 
 impl From<rsa::signature::Error> for MyError {
-    fn from(_err: rsa::signature::Error) -> Self {
-        MyError::RsaSignature
+    fn from(e: rsa::signature::Error) -> Self {
+        MyError::RsaSignature(e)
     }
 }
 
 impl From<rsa::Error> for MyError {
-    fn from(_err: rsa::Error) -> Self {
-        MyError::Rsa
+    fn from(e: rsa::Error) -> Self {
+        MyError::Rsa(e)
     }
 }
 
 impl From<FromUtf8Error> for MyError {
-    fn from(_err: FromUtf8Error) -> Self {
-        MyError::FromUtf8
+    fn from(e: FromUtf8Error) -> Self {
+        MyError::FromUtf8(e)
     }
 }

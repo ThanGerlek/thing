@@ -47,6 +47,7 @@ pub struct ServerResponse {
     pub nonce_bytes: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl ServerResponse {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
