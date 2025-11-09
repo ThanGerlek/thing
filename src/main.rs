@@ -15,7 +15,7 @@ use rand::thread_rng;
 use rand::RngCore;
 
 use rsa::pkcs8::DecodePublicKey;
-use rsa::pss::{Signature, VerifyingKey};
+use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
