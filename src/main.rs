@@ -1,14 +1,12 @@
-use std::net::TcpStream;
 use std::io;
 use std::io::Read;
 use std::io::Write;
+use std::net::TcpStream;
 use std::string::FromUtf8Error;
 
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm,
-    Key,
-    Nonce,
+    Aes256Gcm, Key, Nonce,
 };
 
 mod messages;
@@ -17,12 +15,11 @@ use messages::{EncryptedMessage, HelloMessage, ServerResponse};
 use rand::thread_rng;
 use rand::RngCore;
 
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 use rsa::pkcs8::DecodePublicKey;
 use rsa::pss::{Signature, VerifyingKey};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
-
+use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 
 fn main() {
     let mut stream = match TcpStream::connect("127.0.0.1:2222") {
@@ -45,7 +42,9 @@ fn main() {
         let mut input = String::new();
         // reads some text from the terminal
         print!("Enter message: ");
-        io::stdin().read_line(&mut input).expect("Failed to read input");
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read input");
         // if the text is “exit”, break from the loop
         if input == "exit" {
             break;
@@ -55,7 +54,6 @@ fn main() {
         println!("{}", output);
     }
 }
-
 
 //
 // Hello Messages
@@ -73,7 +71,9 @@ fn send_hello(stream: &mut TcpStream) -> Result<HelloMessage, MyError> {
 
     let mut buffer = [0; 4096];
     let bytes_read = stream.read(&mut buffer)?;
-    let response_json = str::from_utf8(&buffer[..bytes_read]).expect("Server response not in UTF8").to_string();
+    let response_json = str::from_utf8(&buffer[..bytes_read])
+        .expect("Server response not in UTF8")
+        .to_string();
 
     return Ok(HelloMessage::from_json(response_json)?);
 }
@@ -85,39 +85,42 @@ fn parse_hello_response(hello_response: HelloMessage) -> Result<RsaPublicKey, My
 
     // Convert from PEM format
     let pub_key: RsaPublicKey = RsaPublicKey::from_public_key_pem(&server_public_key_pem)?;
-    
-    // Derive the verifying key from the public key   
+
+    // Derive the verifying key from the public key
     let verifying_key: VerifyingKey<Sha256> = VerifyingKey::from(pub_key.clone());
-    
+
     // Verify the PKCS#1 v1.5 signature on the nonce
     let signature = Signature::try_from(&signed_nonce[..])?;
-    verifying_key.verify(&nonce, &signature)?;  // FIXME Verification error
+    verifying_key.verify(&nonce, &signature)?; // FIXME Verification error
 
     return Ok(pub_key);
 }
-
 
 //
 //  Encrypted Messages
 //
 
-fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey) -> Result<String, MyError> {
-
+fn handle_input(
+    message: String,
+    stream: &mut TcpStream,
+    pub_key: &RsaPublicKey,
+) -> Result<String, MyError> {
     //        Send an Encrypted Message
 
     // Create a new symmetric key K
     let symmetric_key = Aes256Gcm::generate_key(OsRng);
-    
+
     // Create a new nonce
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-    
+
     // Encrypt the message with K
     let symmetric_cipher = Aes256Gcm::new(&symmetric_key);
     let ciphertext: Vec<u8> = symmetric_cipher.encrypt(&nonce, message.as_ref())?;
 
     // Encrypt that key K with the server’s public key
     let mut rng = rand::thread_rng();
-    let encrypted_symmetric_key = pub_key.encrypt(&mut rng, Pkcs1v15Encrypt, symmetric_key.as_ref())?;
+    let encrypted_symmetric_key =
+        pub_key.encrypt(&mut rng, Pkcs1v15Encrypt, symmetric_key.as_ref())?;
 
     // Actually build and send the message
     let msg = EncryptedMessage {
@@ -132,9 +135,10 @@ fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey)
     // Read the response
     let mut buffer = [0; 4096];
     let bytes_read = stream.read(&mut buffer)?;
-    let message_json = str::from_utf8(&buffer[..bytes_read]).expect("Server response not in UTF8").to_string();
+    let message_json = str::from_utf8(&buffer[..bytes_read])
+        .expect("Server response not in UTF8")
+        .to_string();
     let message = ServerResponse::from_json(message_json)?;
-
 
     //        Parse the Server Response
 
@@ -158,7 +162,7 @@ fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey)
     let inner_key: Vec<u8> = cipher.decrypt(&outer_nonce, inner_key.as_ref())?;
     #[allow(deprecated)]
     let inner_key = Key::<Aes256Gcm>::from_slice(&inner_key);
-    
+
     // Decrypt message
     let cipher = Aes256Gcm::new(&inner_key);
     let message: Vec<u8> = cipher.decrypt(&inner_nonce, message.as_ref())?;
@@ -167,7 +171,6 @@ fn handle_input(message: String, stream: &mut TcpStream, pub_key: &RsaPublicKey)
 
     return Ok(message);
 }
-
 
 //
 //    Misc
@@ -178,7 +181,6 @@ fn generate_nonce() -> [u8; 32] {
     thread_rng().fill_bytes(&mut nonce);
     return nonce;
 }
-
 
 #[allow(dead_code)]
 #[derive(Debug)]
